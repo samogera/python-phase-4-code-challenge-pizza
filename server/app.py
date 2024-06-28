@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from models import db, Restaurant, RestaurantPizza, Pizza
 from flask_migrate import Migrate
-from flask import Flask, request, jsonify, make_response
+from flask import Flask, request, make_response, jsonify
 from flask_restful import Api, Resource
 import os
 
@@ -19,51 +19,76 @@ db.init_app(app)
 
 api = Api(app)
 
-@app.route("/")
-def index():
-    return "<h1>Code challenge</h1>"
+class Restaurants(Resource):
+    def get(self):
+        restaurants = [n.to_dict() for n in Restaurant.query.all()]
+        for restaurant in restaurants:
+            restaurant.pop('restaurant_pizzas', None)
+        return make_response(jsonify(restaurants), 200)
 
-# Routes
-@app.route('/restaurants', methods=['GET'])
-def get_restaurants():
-    restaurants = Restaurant.query.all()
-    return jsonify([restaurant.to_dict(only=('id', 'name', 'address')) for restaurant in restaurants])
+api.add_resource(Restaurants, "/restaurants")
 
-@app.route('/restaurants/<int:id>', methods=['GET'])
-def get_restaurant(id):
-    restaurant = Restaurant.query.get(id)
-    if restaurant:
-        return jsonify(restaurant.to_dict(only=('id', 'name', 'address', 'restaurant_pizzas')))
-    return jsonify({"error": "Restaurant not found"}), 404
+class RestaurantByID(Resource):
+    def get(self, id):
+        restaurant = Restaurant.query.filter_by(id=id).first()
+        if restaurant is None:
+            return {"error": "Restaurant not found"}, 404
+        response_dict = restaurant.to_dict()
+        return response_dict, 200
+    
+    def delete(self, id):
+        restaurant = Restaurant.query.filter_by(id=id).first()
+        if restaurant is None:
+            return {"error": "Restaurant not found"}, 404
 
-@app.route('/restaurants/<int:id>', methods=['DELETE'])
-def delete_restaurant(id):
-    restaurant = Restaurant.query.get(id)
-    if restaurant:
         db.session.delete(restaurant)
         db.session.commit()
-        return '', 204
-    return jsonify({"error": "Restaurant not found"}), 404
+        return {}, 204
 
-@app.route('/pizzas', methods=['GET'])
-def get_pizzas():
-    pizzas = Pizza.query.all()
-    return jsonify([pizza.to_dict() for pizza in pizzas])
+api.add_resource(RestaurantByID, "/restaurants/<int:id>")
 
-@app.route('/restaurant_pizzas', methods=['POST'])
-def create_restaurant_pizza():
-    data = request.get_json()
-    try:
-        restaurant_pizza = RestaurantPizza(
-            price=data['price'],
-            pizza_id=data['pizza_id'],
-            restaurant_id=data['restaurant_id']
-        )
-        db.session.add(restaurant_pizza)
-        db.session.commit()
-        return jsonify(restaurant_pizza.to_dict()), 201
-    except ValueError as e:
-        return jsonify({"errors": [str(e)]}), 400
+class Pizzas(Resource):
+    def get(self):
+        response_dict_list = [n.to_dict() for n in Pizza.query.all()]
+        return make_response(jsonify(response_dict_list), 200)
+    
+api.add_resource(Pizzas, "/pizzas")
+
+class RestaurantPizzas(Resource):
+    def post(self):
+        try:
+            data = request.get_json()
+            price = int(data.get('price'))
+            
+            # Create and validate RestaurantPizza instance
+            restaurant_pizza = RestaurantPizza(
+                pizza_id=data.get('pizza_id'),
+                restaurant_id=data.get('restaurant_id'),
+                price=price,
+            )
+            db.session.add(restaurant_pizza)
+            db.session.commit()
+            
+            restaurant = Restaurant.query.get(data.get('restaurant_id'))
+            pizza = Pizza.query.get(data.get('pizza_id'))
+
+            response_dict = {
+                "id": restaurant_pizza.id,
+                "price": restaurant_pizza.price,
+                "pizza_id": restaurant_pizza.pizza_id,
+                "restaurant_id": restaurant_pizza.restaurant_id,
+                "pizza": pizza.to_dict(),
+                "restaurant": restaurant.to_dict(),
+            }
+            
+            return make_response(jsonify(response_dict), 201)
+        
+        except AssertionError as e:
+            return jsonify({'errors': str(e)}), 400
+        except Exception as e:
+            return {"error": "An error occurred"}, 500
+
+api.add_resource(RestaurantPizzas, "/restaurant_pizzas")
 
 if __name__ == "__main__":
     app.run(port=5555, debug=True)
